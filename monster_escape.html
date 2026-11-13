@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="build" content="2026-11-13.1">
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
+<!-- Change the <meta name="build"> content to a new string on every deploy. -->
+<script>
+(function () {
+  if (location.protocol === 'file:') { return; }
+  try {
+    var meta = document.querySelector('meta[name="build"]');
+    var localBuild = meta && meta.getAttribute('content');
+    if (!localBuild || typeof fetch !== 'function') { return; }
+
+    var cleanUrl = location.protocol + '//' + location.host + location.pathname;
+    var checkUrl = cleanUrl + '?_v=' + Date.now();
+
+    fetch(checkUrl, { cache: 'no-store' }).then(function (response) {
+      if (!response.ok) { return null; }
+      return response.text();
+    }).then(function (html) {
+      if (!html) { return; }
+
+      var tagMatch = html.match(/<meta\b(?=[^>]*\bname\s*=\s*["']build["'])[^>]*>/i);
+      var buildMatch = tagMatch && tagMatch[0].match(/\bcontent\s*=\s*["']([^"']+)["']/i);
+      var remoteBuild = buildMatch && buildMatch[1];
+
+      if (!remoteBuild || remoteBuild === localBuild) { return; }
+
+      var guardKey = 'monster-escape-build-reload';
+      try {
+        if (sessionStorage.getItem(guardKey) === remoteBuild) { return; }
+        sessionStorage.setItem(guardKey, remoteBuild);
+      } catch (storageError) {
+        return;
+      }
+
+      location.replace(cleanUrl + '?_v=' + Date.now());
+    }).catch(function () {});
+  } catch (e) {}
+}());
+</script>
+<title>Monster Escape</title>
+<style>
+:root{--gold:#ffd166;--blue:#54c8ff;--panel:#151b2b;--ink:#f4f0dc}
+*{box-sizing:border-box}
+body{margin:0;background:#080c17;color:var(--ink);font-family:ui-monospace,Consolas,monospace;display:flex;min-height:100vh;align-items:center;justify-content:center;padding:14px}
+#shell{width:min(100%,1000px);text-align:center}
+h1{font-size:clamp(24px,5vw,42px);color:var(--gold);text-shadow:3px 3px #713d27;margin:4px 0 10px;letter-spacing:2px}
+#hud{display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;background:#171e30;border:3px solid #39445e;padding:8px 12px;font-size:14px}
+#stage{position:relative;border:4px solid #53617a;background:#111827;box-shadow:0 10px 35px #0009}
+canvas{display:block;width:100%;height:auto;image-rendering:pixelated;touch-action:none}
+#overlay{position:absolute;inset:0;background:#070b15eF;display:flex;align-items:center;justify-content:center;padding:20px}
+#overlay.hidden{display:none}
+.panel{max-width:620px;width:100%;background:#151d30;border:3px solid #8290a9;padding:clamp(16px,4vw,30px);box-shadow:8px 8px #05070d;text-align:center}
+.panel h2{color:var(--gold);font-size:clamp(22px,4vw,32px);margin:0 0 12px}
+.panel p{line-height:1.6;font-size:14px}
+button{font: bold 14px ui-monospace,monospace;color:#101522;background:var(--gold);border:0;border-bottom:4px solid #9c682e;padding:11px 16px;margin:5px;cursor:pointer}
+button:hover{filter:brightness(1.12);transform:translateY(-1px)}
+button.secondary{background:#9edfff;border-color:#347b9a}
+#touch{display:flex;justify-content:space-between;gap:8px;max-width:600px;margin:10px auto}
+.touchgroup{display:flex;gap:7px}
+#touch button{min-width:54px;min-height:48px;margin:0;padding:8px;background:#263653;color:white;border:2px solid #7890b5;border-bottom-width:4px;touch-action:none}
+#help{font-size:12px;color:#aebbd0;line-height:1.6;margin:9px}
+@media(min-width:800px){#touch{max-width:480px}}
+</style>
+</head>
+<body>
+<div id="shell">
+<h1>⚔ MONSTER ESCAPE ⚔</h1>
+<div id="hud">
+<span id="level">Level: 1</span><span id="health">Health: 100</span><span id="score">Gems: 0</span><span id="status">Find the exit!</span>
+</div>
+<div id="stage">
+<canvas id="game" width="800" height="450" aria-label="Monster Escape platform game"></canvas>
+<div id="overlay"><div class="panel" id="panel">
+<h2>MONSTER ESCAPE</h2>
+<p>A brave knight is trapped beneath an ancient kingdom. Explore three dangerous dungeon levels, collect magical gems, defeat monsters, and escape!</p>
+<p><b>Keyboard:</b> A / ← move left · D / → move right · Space jump · Hold F to charge, release to swing · E shield</p>
+<button id="start">Start Adventure</button>
+<button id="continue" class="secondary">Continue</button>
+<button id="instructions" class="secondary">Instructions</button>
+</div></div>
+</div>
+<div id="touch">
+<div class="touchgroup"><button data-key="left">◀</button><button data-key="right">▶</button></div>
+<div class="touchgroup"><button data-key="jump">JUMP</button><button data-key="attack">SWORD</button><button data-key="shield">SHIELD</button></div>
+</div>
+<div id="help">Collect gems (+10). Defeat monsters for treasure. Reach the glowing door to continue. Shield blocks damage briefly.</div>
+</div>
+<script>
+(function(){
+'use strict';
+var canvas=document.getElementById('game'),ctx=canvas.getContext('2d');
+var overlay=document.getElementById('overlay'),panel=document.getElementById('panel');
+var keys={},level=1,score=0,hp=100,gameState='menu',camera=0,last=0;
+var player,platforms,monsters,gems,exit,boss,particles=[];
+var saved={level:1,score:0};
+try{saved=JSON.parse(localStorage.getItem('monsterEscapeSave')||'{"level":1,"score":0}');}catch(e){}
+function save(){try{localStorage.setItem('monsterEscapeSave',JSON.stringify({level:Math.min(level,3),score:score}));}catch(e){}}
+function btn(id,fn){document.getElementById(id).onclick=fn;}
+function show(title,body,buttons){
+ panel.innerHTML='<h2>'+title+'</h2><p>'+body+'</p>'+buttons;
+ overlay.classList.remove('hidden');
+}
+function hide(){overlay.classList.add('hidden');}
+btn('start',function(){level=1;score=0;hp=100;startLevel();});
+btn('continue',function(){level=Math.max(1,Math.min(3,saved.level||1));score=saved.score||0;hp=100;startLevel();});
+btn('instructions',function(){show('HOW TO PLAY','Move with A/D or the arrow keys. Jump with Space. Hold F (or SWORD) to charge your attack, then release. A full charge takes 2 seconds and deals 3 damage. Tap E (or SHIELD) for 3 seconds of protection; it recharges after 8 seconds. Find gems and reach the exit.', '<button id="back">Back</button>');document.getElementById('back').onclick=menu;});
+function menu(){gameState='menu';show('MONSTER ESCAPE','A brave knight is trapped beneath an ancient kingdom. Explore three dangerous dungeon levels, collect magical gems, defeat monsters, and escape!<br><br><b>Keyboard:</b> A / ← move left · D / → move right · Space jump · Hold F to charge, release to swing · E shield','<button id="start2">Start Adventure</button><button class="secondary" id="cont2">Continue</button><button class="secondary" id="inst2">Instructions</button>');document.getElementById('start2').onclick=function(){level=1;score=0;hp=100;startLevel();};document.getElementById('cont2').onclick=function(){level=Math.max(1,Math.min(3,saved.level||1));score=saved.score||0;hp=100;startLevel();};document.getElementById('inst2').onclick=function(){btn('instructions',function(){});show('HOW TO PLAY','A/D or arrows move, Space jumps, hold F then release to attack, E raises your shield. Reach the exit in each level.','<button id="back">Back</button>');document.getElementById('back').onclick=menu;};}
+function startLevel(){
+ gameState='play';camera=0;particles=[];
+ player={x:45,y:330,w:26,h:38,vx:0,vy:0,on:false,face:1,attack:0,charge:0,charging:false,shield:0,shieldCD:0,invuln:0};
+ var length=level===1?1900:level===2?2200:2500;
+ platforms=[{x:0,y:400,w:length,h:50}];
+ var gaps=level===1?[470,900,1370]:level===2?[390,760,1160,1590]:[330,700,1080,1450,1860];
+ gaps.forEach(function(x){platforms.push({x:x,y:325-(x%2)*20,w:115,h:16});});
+ for(var i=0;i<Math.floor(length/220);i++){if(i%2===0)platforms.push({x:170+i*220,y:300-(i%3)*32,w:100,h:15});}
+ monsters=[];gems=[];exit={x:length-80,y:340,w:38,h:60};boss=null;
+ var count=level===1?5:level===2?8:10;
+ for(i=0;i<count;i++){monsters.push({x:240+i*(length-420)/count,y:365,w:28,h:35,hp:3,max:3,dir:i%2?1:-1,min:170+i*(length-420)/count,maxX:300+i*(length-420)/count,alive:true});}
+ for(i=0;i<Math.floor(length/115);i++){gems.push({x:120+i*115,y:level===1?345-(i%3)*48:315-(i%4)*35,r:9,got:false});}
+ if(level===3)boss={x:length-330,y:335,w:60,h:65,hp:20,dir:-1,alive:true,cool:1};
+ hide();updateHUD();
+}
+function updateHUD(){document.getElementById('level').textContent='Level: '+level+(level===1?' — Dungeon Entrance':level===2?' — Monster Chambers':' — The Dark Dungeon');document.getElementById('health').textContent='Health: '+hp;document.getElementById('score').textContent='Gems: '+score;document.getElementById('status').textContent=player&&player.shield>0?'Shield active': 'Find the exit!';}
+function hit(d){if(player.invuln>0||player.shield>0)return;hp=Math.max(0,hp-d);player.invuln=1;updateHUD();if(hp<=0){gameState='over';show('GAME OVER','The dungeon was too dangerous this time. Gems collected: '+score,'<button id="retry">Restart Level</button><button class="secondary" id="main">Main Menu</button>');document.getElementById('retry').onclick=function(){hp=100;startLevel();};document.getElementById('main').onclick=menu;}}
+function attack(){if(player.attack>0)return;var dmg=player.charge>=2?3:1;player.attack=.28;player.charging=false;player.charge=0;
+ monsters.forEach(function(m){if(m.alive&&Math.abs((m.x+14)-(player.x+player.w/2))<60&&Math.abs(m.y-player.y)<55&&((m.x>player.x&&player.face===1)||(m.x<player.x&&player.face===-1))){m.hp-=dmg;if(m.hp<=0){m.alive=false;if(Math.random()<.7){gems.push({x:m.x,y:m.y-20,r:9,got:false});}else{particles.push({x:m.x,y:m.y-20,heal:true,life:1});}}}});
+ if(boss&&boss.alive&&Math.abs((boss.x+30)-(player.x+13))<85&&Math.abs(boss.y-player.y)<70&&((boss.x>player.x&&player.face===1)||(boss.x<player.x&&player.face===-1))){boss.hp-=dmg;if(boss.hp<=0){boss.alive=false;exit.x+=0;}}
+}
+function update(dt){
+ if(gameState!=='play')return;
+ var left=keys.left||keys.ArrowLeft||keys.a||keys.A,right=keys.right||keys.ArrowRight||keys.d||keys.D;
+ player.vx=(right?1:0)-(left?1:0);player.vx*=190;if(player.vx)player.face=player.vx>0?1:-1;
+ if((keys.jump||keys[' ']||keys.Spacebar)&&player.on){player.vy=-440;player.on=false;}
+ if(keys.attack||keys.f||keys.F){if(!player.charging&&player.attack<=0)player.charging=true;if(player.charging)player.charge=Math.min(2,player.charge+dt);}else if(player.charging){attack();}
+ if(keys.shield||keys.e||keys.E){if(player.shieldCD<=0){player.shield=3;player.shieldCD=8;}keys.shield=false;keys.e=false;keys.E=false;}
+ player.shield=Math.max(0,player.shield-dt);player.shieldCD=Math.max(0,player.shieldCD-dt);player.attack=Math.max(0,player.attack-dt);player.invuln=Math.max(0,player.invuln-dt);
+ player.x+=player.vx*dt;player.vy+=1000*dt;player.y+=player.vy*dt;player.on=false;
+ platforms.forEach(function(p){if(player.x+player.w>p.x&&player.x<p.x+p.w&&player.y+player.h>=p.y&&player.y+player.h<=p.y+25&&player.vy>=0){player.y=p.y-player.h;player.vy=0;player.on=true;}});
+ if(player.y>520){hit(100);player.y=330;}
+ player.x=Math.max(0,Math.min(2450,player.x));
+ monsters.forEach(function(m){if(!m.alive)return;m.x+=m.dir*(level===1?55:level===2?78:95)*dt;if(m.x<m.min||m.x>m.maxX)m.dir*=-1;if(rect(player,m))hit(20);});
+ gems.forEach(function(g){if(!g.got&&Math.abs(player.x+13-g.x)<22&&Math.abs(player.y+18-g.y)<28){g.got=true;score+=10;updateHUD();}});
+ particles.forEach(function(p){p.life-=dt;if(p.heal&&Math.abs(player.x-p.x)<45&&Math.abs(player.y-p.y)<50){hp=Math.min(100,hp+20);p.life=0;updateHUD();}});
+ particles=particles.filter(function(p){return p.life>0;});
+ if(boss&&boss.alive){boss.x+=boss.dir*55*dt;if(boss.x<exit.x-250||boss.x>exit.x-100)boss.dir*=-1;boss.cool-=dt;if(boss.cool<=0){if(Math.abs(player.x-boss.x)<130)hit(20);boss.cool=2.3;}}
+ if(player.x>exit.x&&(!boss||!boss.alive)){if(level<3){level++;saved.level=level;saved.score=score;save();show('LEVEL COMPLETE','You escaped this part of the dungeon! Gems collected: '+score,'<button id="next">Continue</button>');document.getElementById('next').onclick=startLevel;gameState='pause';}else{gameState='win';save();show('VICTORY!','The Dungeon Guardian is defeated. The knight has escaped the dungeon with '+score+' gems!','<button id="again">Play Again</button><button class="secondary" id="home">Main Menu</button>');document.getElementById('again').onclick=function(){level=1;score=0;hp=100;startLevel();};document.getElementById('home').onclick=menu;}}
+ camera=Math.max(0,Math.min(2450,player.x-300));updateHUD();
+}
+function rect(a,b){return a.x<a.x+a.w&&a.x<b.x+b.w&&a.x+a.w>b.x&&a.y<b.y+b.h&&a.y+a.h>b.y;}
+function draw(){
+ ctx.fillStyle=level===1?'#202a3a':level===2?'#241b39':'#260f19';ctx.fillRect(0,0,800,450);
+ ctx.save();ctx.translate(-camera,0);
+ for(var x=0;x<2700;x+=64){ctx.fillStyle=level===1?'#2c394a':level===2?'#38284b':'#3b1b27';ctx.fillRect(x,0,2,400);ctx.fillRect(x,0,64,2);}
+ for(var t=100;t<2600;t+=310){ctx.fillStyle='#6a3b24';ctx.fillRect(t,145,8,38);ctx.fillStyle='#ff9b35';ctx.fillRect(t-4,130,16,20);ctx.fillStyle='#ffe18a';ctx.fillRect(t+1,134,6,11);}
+ platforms.forEach(function(p){ctx.fillStyle='#596174';ctx.fillRect(p.x,p.y,p.w,p.h);ctx.fillStyle='#8992a2';ctx.fillRect(p.x,p.y,p.w,5);ctx.fillStyle='#303849';for(var j=0;j<p.w;j+=28)ctx.fillRect(p.x+j,p.y+12,2,5);});
+ gems.forEach(function(g){if(!g.got){ctx.fillStyle='#62e8ff';ctx.beginPath();ctx.moveTo(g.x,g.y-g.r);ctx.lineTo(g.x+g.r,g.y);ctx.lineTo(g.x,g.y+g.r);ctx.lineTo(g.x-g.r,g.y);ctx.fill();}});
+ monsters.forEach(function(m){if(!m.alive)return;ctx.fillStyle='#7d4aa0';ctx.fillRect(m.x,m.y,m.w,m.h);ctx.fillStyle='#e9d7ff';ctx.fillRect(m.x+6,m.y+9,5,5);ctx.fillRect(m.x+18,m.y+9,5,5);ctx.fillStyle='#2c173d';ctx.fillRect(m.x+8,m.y+24,13,4);ctx.fillStyle='#d5b6ff';ctx.fillRect(m.x,m.y-8,m.w*(m.hp/3),4);});
+ if(boss&&boss.alive){ctx.fillStyle='#9e273d';ctx.fillRect(boss.x,boss.y,boss.w,boss.h);ctx.fillStyle='#ffcc66';ctx.fillRect(boss.x+12,boss.y+16,9,8);ctx.fillRect(boss.x+39,boss.y+16,9,8);ctx.fillStyle='#fff';ctx.fillRect(boss.x,boss.y-12,boss.w*(boss.hp/20),6);ctx.fillStyle='#fff';ctx.font='12px monospace';ctx.fillText('DUNGEON GUARDIAN',boss.x-35,boss.y-20);}
+ ctx.fillStyle='#d9a84e';ctx.fillRect(exit.x,exit.y,exit.w,exit.h);ctx.fillStyle='#111827';ctx.fillRect(exit.x+9,exit.y+12,20,48);ctx.fillStyle='#ffe48a';ctx.fillRect(exit.x+26,exit.y+34,4,4);
+ // Knight
+ ctx.fillStyle=player.invuln>0?'#ffffff': '#c5d0dc';ctx.fillRect(player.x+5,player.y+9,17,23);ctx.fillStyle='#8ccfff';ctx.fillRect(player.x+2,player.y+18,6,20);ctx.fillRect(player.x+19,player.y+18,7,20);ctx.fillStyle='#eef3f7';ctx.fillRect(player.x+4,player.y,19,15);ctx.fillStyle='#25344c';ctx.fillRect(player.x+7,player.y+6,14,5);ctx.fillStyle='#65bfff';ctx.fillRect(player.x+14,player.y-5,10,6);ctx.fillStyle='#d6e4ef';ctx.fillRect(player.x+player.face*22,player.y+17,player.face*17,4);
+ if(player.attack>0||player.charging){ctx.strokeStyle='#b9f1ff';ctx.lineWidth=4;ctx.beginPath();ctx.arc(player.x+13+player.face*25,player.y+20,player.attack>0?35:20,-1,1);ctx.stroke();}
+ if(player.shield>0){ctx.strokeStyle='#50cfff';ctx.lineWidth=4;ctx.beginPath();ctx.arc(player.x+13,player.y+18,31,0,Math.PI*2);ctx.stroke();}
+ ctx.restore();
+ ctx.fillStyle='#fff';ctx.font='13px monospace';ctx.fillText('Charge: '+Math.floor(player.charge/2*100)+'%  Shield: '+(player.shieldCD>0?player.shieldCD.toFixed(1)+'s':'READY'),12,22);
+ if(gameState==='menu'){ctx.fillStyle='#ffffff18';ctx.fillRect(0,0,800,450);}
+}
+function loop(ts){var dt=Math.min(.032,(ts-last)/1000||0);last=ts;update(dt);if(gameState==='play'||gameState==='pause'||gameState==='win'||gameState==='over'||gameState==='menu')draw();requestAnimationFrame(loop);}
+document.addEventListener('keydown',function(e){var k=e.key;if(['ArrowLeft','ArrowRight',' ','ArrowUp'].indexOf(k)>=0)e.preventDefault();keys[k]=true;if(k==='ArrowUp'||k==='w'||k==='W')keys.jump=true;});
+document.addEventListener('keyup',function(e){keys[e.key]=false;if(e.key==='ArrowUp'||e.key==='w'||e.key==='W')keys.jump=false;});
+document.querySelectorAll('#touch button').forEach(function(b){var k=b.getAttribute('data-key');function on(){keys[k]=true;}function off(){if(k==='attack'){keys.attack=false;}else{keys[k]=false;}}b.addEventListener('pointerdown',function(e){e.preventDefault();on();});['pointerup','pointerleave','pointercancel'].forEach(function(ev){b.addEventListener(ev,function(e){e.preventDefault();off();});});});
+menu();requestAnimationFrame(loop);
+}());
+</script>
+</body>
+</html>
